@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+results/
+data/*/
+!data/.gitkeep
+*.pt
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+dist/
+*.egg-info/
+build/
