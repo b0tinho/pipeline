@@ -12,17 +12,18 @@ if ! command -v python3 &> /dev/null; then
     exit 1
 fi
 
-# Sprawdz czy CUDA jest dostepna (opcjonalnie)
+# Sprawdz czy CUDA GPU jest dostepna
 if command -v nvidia-smi &> /dev/null; then
-    echo "CUDA GPU wykryta."
-    PIP_INDEX=""
+    echo "GPU NVIDIA wykryta - instalacja PyTorch z CUDA 11.8."
+    TORCH_INDEX="--index-url https://download.pytorch.org/whl/cu118"
 else
-    echo "Brak CUDA GPU - instalacja PyTorch CPU."
-    PIP_INDEX="--index-url https://download.pytorch.org/whl/cpu"
+    echo "Brak GPU NVIDIA - instalacja PyTorch CPU."
+    TORCH_INDEX=""
 fi
 
 # Tworzenie venv
 if [ ! -d "venv" ]; then
+    echo ""
     echo "Tworzenie srodowiska wirtualnego..."
     python3 -m venv venv
     echo "OK."
@@ -30,25 +31,41 @@ else
     echo "Srodowisko wirtualne juz istnieje."
 fi
 
-# Aktywacja i instalacja
-echo ""
-echo "Instalacja zaleznosci..."
+# Aktywacja
 source venv/bin/activate
+
+# Instalacja PyTorch (GPU lub CPU)
+echo ""
+echo "Instalacja PyTorch..."
 pip install --upgrade pip --quiet
-pip install $PIP_INDEX -r requirements.txt
+pip install $TORCH_INDEX torch torchvision torchaudio --quiet
+
+# Instalacja reszty zaleznosci
+echo ""
+echo "Instalacja pozostalych zaleznosci..."
+pip install -r requirements.txt --quiet
+
+# Weryfikacja
+echo ""
+echo "Weryfikacja instalacji..."
+python3 -c "
+import torch
+print(f'  PyTorch: {torch.__version__}')
+print(f'  CUDA available: {torch.cuda.is_available()}')
+if torch.cuda.is_available():
+    print(f'  CUDA version: {torch.version.cuda}')
+    print(f'  GPU: {torch.cuda.get_device_name(0)}')
+"
 
 echo ""
 echo "========================================"
 echo "Instalacja zakonczona."
 echo ""
 echo "Aby uruchomic pipeline:"
-echo "  1. Aktywuj venv:   source venv/bin/activate"
-echo "  2. Umiesc dane:    skopiuj foldery TESS, RAVDESS, SAVEE, CREMA-D do data/"
-echo "  3. Uruchom:        python run.py"
+echo "  1. source venv/bin/activate"
+echo "  2. Skopiuj foldery TESS, RAVDESS, SAVEE, CREMA-D do data/"
+echo "  3. python run.py"
 echo ""
-echo "Dostepne opcje:"
-echo "  python run.py                      - wszystkie 4 datasety x 5 modeli"
-echo "  python run.py --combined           - tryb polaczonych danych (6 klas)"
-echo "  python run.py --models dscnn,lstm  - tylko wybrane modele"
-echo "  python run.py --datasets SAVEE     - tylko jeden dataset"
+echo "Dostepne opcje CLI:"
+echo "  python run.py --help"
 echo "========================================"
