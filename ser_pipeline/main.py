@@ -39,12 +39,18 @@ from .model import MODEL_REGISTRY, build_model
 # .wav zgodne z konwencją nazewnictwa danego zbioru (patrz
 # `data_parsing.py`) - przeszukiwanie jest rekurencyjne.
 # ---------------------------------------------------------------------------
-DATASET_ROOT_PATHS = {
-    "TESS": "data/TESS",
-    "RAVDESS": "data/RAVDESS",
-    "SAVEE": "data/SAVEE",
-    "CREMA-D": "data/CREMA-D",
-}
+DATASET_NAMES = ["TESS", "RAVDESS", "SAVEE", "CREMA-D"]
+
+RAW_DATA_ROOT = "data"
+PREPROCESSED_DATA_ROOT = "data_preprocessed"
+
+
+def _build_root_paths(base_root: str) -> dict[str, str]:
+    """Buduje mapę `{dataset: sciezka}` dla wybranego korzenia danych."""
+    return {name: f"{base_root}/{name}" for name in DATASET_NAMES}
+
+
+DATASET_ROOT_PATHS = _build_root_paths(RAW_DATA_ROOT)
 
 RESULTS_DIR = Path("results")
 RANDOM_SEED = 42
@@ -173,6 +179,7 @@ def run_pipeline_for_dataset(
 
 def run_combined_pipeline(
     model_names: list[str],
+    dataset_root_paths: dict[str, str],
     audio_config: AudioProcessingConfig,
     augmentation_config: AugmentationConfig,
     training_config: TrainingConfig,
@@ -185,11 +192,20 @@ def run_combined_pipeline(
     polaczeniem (ochrona przed speaker leakage). Wszystkie datasety
     sa filtrowane do 6 wspolnych klas emocji (bez Surprise).
     Wyniki zapisywane sa w results/combined/<MODEL>/.
+
+    Args:
+        model_names: Lista kluczy architektur do wytrenowania.
+        dataset_root_paths: Mapa `{dataset: sciezka}` (surowa lub
+            preprocessed, zaleznie od `main`).
+        audio_config: Konfiguracja audio.
+        augmentation_config: Konfiguracja augmentacji.
+        training_config: Hiperparametry treningu.
+        batch_size: Rozmiar batcha.
     """
     augmenter = AudioAugmenter(augmentation_config, audio_config.sample_rate)
 
     data_loaders = build_combined_dataloaders(
-        DATASET_ROOT_PATHS,
+        dataset_root_paths,
         audio_config=audio_config,
         augmenter=augmenter,
         batch_size=batch_size,
@@ -238,6 +254,7 @@ def main(
     model_names: list[str] | None = None,
     dataset_names: list[str] | None = None,
     combined: bool = False,
+    use_preprocessed: bool = False,
 ) -> None:
     """Glowny punkt wejscia pipeline'u.
 
@@ -256,7 +273,14 @@ def main(
             None = wszystkie.
         dataset_names: Lista datasetow (ignorowane gdy combined=True).
         combined: Czy uzyc trybu polaczonych danych.
+        use_preprocessed: Czy czytac dane z `data_preprocessed/`
+            (VAD + preemfaza) zamiast surowych `data/`. Wymaga wczesniejszego
+            uruchomienia `preprocess_data.py`.
     """
+    # Wybor korzenia danych: surowe vs preprocessed (VAD + preemfaza).
+    data_root = PREPROCESSED_DATA_ROOT if use_preprocessed else RAW_DATA_ROOT
+    dataset_root_paths = _build_root_paths(data_root)
+
     selected_models = (
         model_names if model_names is not None else list(MODEL_REGISTRY.keys())
     )
@@ -280,10 +304,12 @@ def main(
     if combined:
         print(
             f"Tryb COMBINED: {len(selected_models)} modele na "
-            f"polaczonych danych (TESS+RAVDESS+SAVEE+CREMA-D, 6 klas)."
+            f"polaczonych danych (TESS+RAVDESS+SAVEE+CREMA-D, 6 klas). "
+            f"Zrodlo: {data_root}"
         )
         run_combined_pipeline(
             model_names=selected_models,
+            dataset_root_paths=dataset_root_paths,
             audio_config=audio_config,
             augmentation_config=augmentation_config,
             training_config=training_config,
@@ -291,10 +317,9 @@ def main(
         return
 
     selected_datasets = (
-        dataset_names if dataset_names is not None
-        else list(DATASET_ROOT_PATHS.keys())
+        dataset_names if dataset_names is not None else DATASET_NAMES
     )
-    unknown_ds = set(selected_datasets) - set(DATASET_ROOT_PATHS.keys())
+    unknown_ds = set(selected_datasets) - set(DATASET_NAMES)
     if unknown_ds:
         raise ValueError(
             f"Nieznane datasety: {sorted(unknown_ds)}."
@@ -304,11 +329,12 @@ def main(
     completed = 0
     print(
         f"Plan: {len(selected_datasets)} datasety x "
-        f"{len(selected_models)} modele = {total} kombinacji."
+        f"{len(selected_models)} modele = {total} kombinacji. "
+        f"Zrodlo: {data_root}"
     )
 
     for dataset_name in selected_datasets:
-        root_dir = DATASET_ROOT_PATHS[dataset_name]
+        root_dir = dataset_root_paths[dataset_name]
         if not Path(root_dir).exists():
             print(f"[UWAGA] Katalog '{root_dir}' nie istnieje.")
             continue

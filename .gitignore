@@ -4,6 +4,7 @@ __pycache__/
 venv/
 results/
 data/*/
+data_preprocessed/
 !data/.gitkeep
 *.pt
 .vscode/
