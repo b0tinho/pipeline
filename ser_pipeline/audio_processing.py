@@ -40,6 +40,13 @@ class AudioProcessingConfig:
             o widmie (MFCC odrzuca część informacji poprzez kompresję
             DCT), co zazwyczaj przekłada się na wyższą skuteczność w
             zadaniach SER przy architekturach opartych o CNN/CRNN.
+        use_deltas: Czy dodać cechy delta (pierwsza pochodna czasowa) i
+            delta-delta (druga pochodna) jako dodatkowe kanały wejściowe.
+            Gdy True, ekstrahowane cechy mają 3 kanały:
+            (statyka, delta, delta-delta) - patrz `num_channels`. Cechy
+            dynamiczne wychwytują zmianę widma w czasie (tempo mowy,
+            przejścia między fonemami), co zwykle poprawia skuteczność
+            SER przy architekturach CNN/CRNN.
     """
 
     sample_rate: int = 16_000
@@ -49,6 +56,7 @@ class AudioProcessingConfig:
     n_fft: int = 1024
     hop_length: int = 256
     feature_type: FeatureType = "melspectrogram"
+    use_deltas: bool = False
 
     @property
     def target_length_samples(self) -> int:
@@ -59,6 +67,11 @@ class AudioProcessingConfig:
     def feature_dim(self) -> int:
         """Wymiar częstotliwościowy wektora cech (zależny od wybranego typu)."""
         return self.n_mfcc if self.feature_type == "mfcc" else self.n_mels
+
+    @property
+    def num_channels(self) -> int:
+        """Liczba kanałów wejściowych: 1 (statyka) lub 3 (statyka + delta + delta-delta)."""
+        return 3 if self.use_deltas else 1
 
 
 def load_audio(file_path: str, sample_rate: int) -> np.ndarray:
@@ -104,16 +117,19 @@ def extract_features(signal: np.ndarray, config: AudioProcessingConfig) -> np.nd
         signal: Sygnał audio 1D o ustalonej długości (patrz
             `pad_or_truncate`).
         config: Konfiguracja przetwarzania audio, decydująca m.in.
-            o typie ekstrahowanych cech (`config.feature_type`).
+            o typie ekstrahowanych cech (`config.feature_type`) oraz
+            o dodaniu cech delta (`config.use_deltas`).
 
     Returns:
-        Macierz cech 2D o kształcie (n_features, n_time_frames).
+        Tensor cech 3D o kształcie (num_channels, n_features, n_frames),
+        gdzie num_channels = 1 (statyka) lub 3 (statyka + delta + delta-delta),
+        zależnie od `config.use_deltas`.
 
     Raises:
         ValueError: Gdy `config.feature_type` nie jest rozpoznane.
     """
     if config.feature_type == "mfcc":
-        features = librosa.feature.mfcc(
+        base_features = librosa.feature.mfcc(
             y=signal,
             sr=config.sample_rate,
             n_mfcc=config.n_mfcc,
@@ -128,9 +144,16 @@ def extract_features(signal: np.ndarray, config: AudioProcessingConfig) -> np.nd
             n_fft=config.n_fft,
             hop_length=config.hop_length,
         )
-        features = librosa.power_to_db(mel_spec, ref=np.max)
+        base_features = librosa.power_to_db(mel_spec, ref=np.max)
     else:
         raise ValueError(f"Nieznany typ cech: {config.feature_type}")
+
+    if config.use_deltas:
+        delta = librosa.feature.delta(base_features)
+        delta_delta = librosa.feature.delta(base_features, order=2)
+        features = np.stack([base_features, delta, delta_delta], axis=0)
+    else:
+        features = base_features[np.newaxis, :, :]
 
     return features.astype(np.float32)
 
@@ -146,7 +169,8 @@ def preprocess_and_extract(file_path: str, config: AudioProcessingConfig) -> np.
         config: Konfiguracja przetwarzania audio.
 
     Returns:
-        Macierz cech 2D gotowa do podania na wejście sieci neuronowej.
+        Tensor cech 3D (num_channels, n_features, n_frames) gotowy do
+        podania na wejście sieci neuronowej.
     """
     signal = load_audio(file_path, config.sample_rate)
     signal = pad_or_truncate(signal, config.target_length_samples)

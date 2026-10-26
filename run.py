@@ -10,6 +10,7 @@ Opcje:
     --datasets DS1,DS2        Tylko wybrane datasety (domyslnie: wszystkie)
     --combined                Tryb polaczonych danych (6 klas)
     --preprocessed            Czytaj dane z data_preprocessed/ (VAD+preemfaza)
+    --deltas                  3 kanały wejściowe (statyka + delta + delta-delta)
     --epochs N                Liczba epok (domyslnie: 50)
     --batch-size N            Rozmiar batcha (domyslnie: 32)
 
@@ -17,6 +18,7 @@ Przyklady:
     python run.py
     python run.py --combined
     python run.py --preprocessed
+    python run.py --deltas
     python run.py --models dscnn,lstm --datasets SAVEE
     python run.py --models gender_aware --datasets TESS,CREMA-D --epochs 30
 """
@@ -69,6 +71,12 @@ Dostepne datasety: TESS, RAVDESS, SAVEE, CREMA-D
         help="Czytaj dane z data_preprocessed/ (VAD + preemfaza)",
     )
     parser.add_argument(
+        "--deltas",
+        action="store_true",
+        default=False,
+        help="3 kanały wejściowe: statyka + delta + delta-delta",
+    )
+    parser.add_argument(
         "--epochs",
         type=int,
         default=None,
@@ -101,4 +109,5 @@ if __name__ == "__main__":
         dataset_names=args.datasets,
         combined=args.combined,
         use_preprocessed=args.preprocessed,
+        use_deltas=args.deltas,
     )

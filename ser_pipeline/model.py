@@ -302,6 +302,7 @@ class KumbharLSTMClassifier(nn.Module):
         self,
         num_classes: int,
         input_freq_dim: int,
+        input_channels: int = 1,
         lstm_hidden_size: int = 128,
         dropout: float = 0.5,
     ) -> None:
@@ -309,14 +310,18 @@ class KumbharLSTMClassifier(nn.Module):
         Args:
             num_classes: Liczba klas emocji w bieżącym datasecie.
             input_freq_dim: Liczba cech na krok czasowy (np. `n_mfcc`
-                lub `n_mels` z `AudioProcessingConfig`) - rozmiar
-                wejścia warstwy LSTM.
+                lub `n_mels` z `AudioProcessingConfig`) - wymiar
+                częstotliwościowy pojedynczego kanału.
+            input_channels: Liczba kanałów wejściowych (1 lub 3 dla
+                statyka+delta+delta-delta). Przy wielu kanałach są one
+                konkatenowane w wektor cech każdego kroku czasowego.
             lstm_hidden_size: Rozmiar stanu ukrytego LSTM.
             dropout: Współczynnik dropout stosowany przed klasyfikatorem.
         """
         super().__init__()
+        self.input_channels = input_channels
         self.lstm = nn.LSTM(
-            input_size=input_freq_dim,
+            input_size=input_freq_dim * input_channels,
             hidden_size=lstm_hidden_size,
             num_layers=1,
             batch_first=True,
@@ -338,15 +343,16 @@ class KumbharLSTMClassifier(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            x: Tensor wejściowy o kształcie (batch, 1, n_features, n_frames)
+            x: Tensor wejściowy o kształcie (batch, C, n_features, n_frames)
                 lub już spłaszczony (batch, n_frames, n_features).
 
         Returns:
             Logity o kształcie (batch, num_classes).
         """
         if x.dim() == 4:
-            # (batch, 1, n_features, n_frames) -> (batch, n_frames, n_features)
-            x = x.squeeze(1).permute(0, 2, 1)
+            # (batch, C, n_features, n_frames) -> (batch, n_frames, C * n_features)
+            batch_size, channels, freq, time_dim = x.size()
+            x = x.permute(0, 3, 1, 2).reshape(batch_size, time_dim, channels * freq)
 
         _, (h_n, _) = self.lstm(x)
         last_hidden = h_n[-1]

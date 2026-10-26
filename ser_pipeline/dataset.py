@@ -142,13 +142,17 @@ class SpeechEmotionDataset(Dataset):
             signal = self.augmenter.apply_random(signal)
 
         signal = pad_or_truncate(signal, self.audio_config.target_length_samples)
-        features = extract_features(signal, self.audio_config)
+        features = extract_features(signal, self.audio_config)  # (C, F, T)
 
-        # Standaryzacja cech (per-próbka) - stabilizuje i przyspiesza trening.
-        mean, std = features.mean(), features.std() + 1e-8
+        # Standaryzacja cech PER-KANAŁ (statyka/delta/delta-delta mają
+        # różne rozkłady amplitud, więc normalizacja globalna zniekształciłaby
+        # je względem siebie). Dla pojedynczego kanału jest to równoważne
+        # dotychczasowej standaryzacji globalnej.
+        mean = features.mean(axis=(1, 2), keepdims=True)
+        std = features.std(axis=(1, 2), keepdims=True) + 1e-8
         features = (features - mean) / std
 
-        feature_tensor = torch.from_numpy(features).unsqueeze(0)  # (1, F, T)
+        feature_tensor = torch.from_numpy(features)  # (C, F, T)
 
         # Etykieta precyzyjna (fine) - oryginalna emocja.
         label_index = int(self.label_encoder.transform([row["emotion"]])[0])

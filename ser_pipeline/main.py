@@ -139,11 +139,13 @@ def run_pipeline_for_dataset(
     )
 
     # 4. Budowa modelu z warstwą wyjściową dopasowaną do liczby klas
-    # w bieżącym datasecie.
+    # w bieżącym datasecie oraz liczbą kanałów wejściowych zależną od
+    # konfiguracji audio (1 lub 3 dla delta/delta-delta).
     model = build_model(
         model_name,
         num_classes=data_loaders.num_classes,
         input_freq_dim=audio_config.feature_dim,
+        input_channels=audio_config.num_channels,
         **(model_kwargs or {}),
     )
 
@@ -227,6 +229,7 @@ def run_combined_pipeline(
             model_name,
             num_classes=data_loaders.num_classes,
             input_freq_dim=audio_config.feature_dim,
+            input_channels=audio_config.num_channels,
         )
 
         checkpoint_path = output_dir / "best_model.pt"
@@ -255,6 +258,7 @@ def main(
     dataset_names: list[str] | None = None,
     combined: bool = False,
     use_preprocessed: bool = False,
+    use_deltas: bool = False,
 ) -> None:
     """Glowny punkt wejscia pipeline'u.
 
@@ -276,6 +280,8 @@ def main(
         use_preprocessed: Czy czytac dane z `data_preprocessed/`
             (VAD + preemfaza) zamiast surowych `data/`. Wymaga wczesniejszego
             uruchomienia `preprocess_data.py`.
+        use_deltas: Czy dodać cechy delta i delta-delta (3 kanały wejściowe)
+            obok statycznego Mel-spektrogramu/MFCC.
     """
     # Wybor korzenia danych: surowe vs preprocessed (VAD + preemfaza).
     data_root = PREPROCESSED_DATA_ROOT if use_preprocessed else RAW_DATA_ROOT
@@ -295,6 +301,7 @@ def main(
     audio_config = AudioProcessingConfig(
         sample_rate=16_000, duration_seconds=3.0,
         n_mels=128, feature_type="melspectrogram",
+        use_deltas=use_deltas,
     )
     augmentation_config = AugmentationConfig(apply_probability=0.5)
     training_config = TrainingConfig(
