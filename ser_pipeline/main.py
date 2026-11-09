@@ -67,6 +67,8 @@ def set_global_seed(seed: int) -> None:
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True
 
 
 def run_pipeline_for_dataset(

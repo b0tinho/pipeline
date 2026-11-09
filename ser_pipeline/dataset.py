@@ -193,7 +193,7 @@ def build_dataloaders(
     test_size: float = 0.15,
     val_size: float = 0.15,
     random_state: int = 42,
-    num_workers: int = 0,
+    num_workers: int = 12,
 ) -> DataLoaders:
     """Buduje pełny zestaw DataLoaderów (train/val/test) dla JEDNEGO
     datasetu, ze stratyfikowanym podziałem klas i augmentacją
@@ -265,12 +265,27 @@ def build_dataloaders(
         shuffle=True,
         num_workers=num_workers,
         drop_last=False,
+        pin_memory=True,
+        persistent_workers=num_workers > 0,
+        prefetch_factor=4 if num_workers > 0 else None,
     )
     val_loader = DataLoader(
-        val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=num_workers > 0,
+        prefetch_factor=4 if num_workers > 0 else None,
     )
     test_loader = DataLoader(
-        test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=num_workers > 0,
+        prefetch_factor=4 if num_workers > 0 else None,
     )
 
     return DataLoaders(
@@ -302,7 +317,7 @@ def build_combined_dataloaders(
     test_size: float = 0.15,
     val_size: float = 0.15,
     random_state: int = 42,
-    num_workers: int = 0,
+    num_workers: int = 12,
 ) -> DataLoaders:
     """Buduje DataLoadery na POLACZONYCH danych z wszystkich datasetow.
 
@@ -380,14 +395,23 @@ def build_combined_dataloaders(
     train_loader = DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True,
         num_workers=num_workers, drop_last=False,
+        pin_memory=True,
+        persistent_workers=num_workers > 0,
+        prefetch_factor=4 if num_workers > 0 else None,
     )
     val_loader = DataLoader(
         val_dataset, batch_size=batch_size, shuffle=False,
         num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=num_workers > 0,
+        prefetch_factor=4 if num_workers > 0 else None,
     )
     test_loader = DataLoader(
         test_dataset, batch_size=batch_size, shuffle=False,
         num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=num_workers > 0,
+        prefetch_factor=4 if num_workers > 0 else None,
     )
 
     return DataLoaders(
