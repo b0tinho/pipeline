@@ -47,7 +47,7 @@ Wspólny kontrakt: wejście `(B, C, F, T)` (C=1 statyka lub C=3 z delta), wyjśc
 - **Delta + delta-delta**: flaga `--deltas`, 3 kanały wejściowe, standaryzacja per-kanał.
 - **Preprocessing offline**: VAD + preemfaza (`preprocess_data.py` → `data_preprocessed/`, flaga `--preprocessed`).
 - **Multi-task loss**: `hierarchical_crnn` → target walencji (Negative/Neutral/Positive); `gender_aware` → target płci (wywodzony z nazwy pliku). Wykrywanie typu aux target w `engine.py` po liczbie neuronów `gender_head`.
-- **Płeć z nazw plików**: TESS (OAF/YAF=Female), RAVDESS (aktorzy 1–12=F, 13–24=M), SAVEE (DC=KL=M, JE=JK=F), CREMA-D (parzyste ID=F).
+- **Płeć z nazw plików**: TESS (OAF/YAF=Female), RAVDESS (nieparzysty aktor=M, parzysty=F), SAVEE (wszyscy 4 mówcy=M), CREMA-D (zbiór ID aktorek `CREMAD_FEMALE_ACTOR_IDS` z oficjalnego `VideoDemographics.csv`; 48 M / 43 F).
 - **GPU**: `num_workers=12`, `pin_memory=True`, `persistent_workers=True`, `prefetch_factor=4`, `cudnn.benchmark=True` (w `set_global_seed`).
 
 ## Wyniki (accuracy testowe)
@@ -73,7 +73,7 @@ Wspólny kontrakt: wejście `(B, C, F, T)` (C=1 statyka lub C=3 z delta), wyjśc
 ## Napotkane problemy i rozwiązania
 
 1. **Wariancja podziału**: stary `combined` (2088 test) vs nowy (1728) dawał ~6 p.p. różnicy. Weryfikacja starych checkpointów na nowym teście wykazała, że to **efekt podziału** (ten sam model traci 5–7.6 p.p. przy zmianie testu), nie regresja modelu.
-2. **Błędne etykiety płci SAVEE** (JE/KL zamienione) — poprawione.
+2. **Błędne etykiety płci** (2026-11-15) — RAVDESS (1–12=F zamiast parzysty=F, ~50% błędnych), SAVEE (JE/JK jako F, a wszyscy to M), CREMA-D (reguła parzystości błędna dla 42/91 aktorów, 46% nagrań). Poprawione w `data_parsing.py`; wyniki `gender_aware` sprzed poprawki są nieważne — do powtórzenia (pozostałe modele nie używają płci).
 3. **Nietypowy plik TESS** `OA_bite_neutral.wav` (2-literowy prefix) — fallback do nazwy folderu w `parse_tess_gender`.
 4. **LSTM bez obsługi 3 kanałów** — dodano `input_channels` i konkatenację kanałów w `forward`.
 5. **Colorbar najeżdżał na spektrogram** — dedykowana oś `fig.add_axes([0.87, ...])`.

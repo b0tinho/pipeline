@@ -220,19 +220,34 @@ COARSE_EMOTION_MAP: Dict[str, str] = {
 # mówcy/aktora w nazwie pliku, a płeć jest znana z oficjalnej
 # dokumentacji zbiorów (lub wprost z prefixu nazwy dla TESS).
 #
-# TESS:   tylko Female (starsza / młodsza aktorka) - OAF, YAF.
-# RAVDESS: aktorzy 1-12 = Female, 13-24 = Male (dokumentacja).
-# SAVEE:  DC (David Cowan), KL = Male; JE (James), JK = Female.
-# CREMA-D: parzyste ActorID = Female, nieparzyste = Male.
+# TESS:    tylko Female (starsza / młodsza aktorka) - OAF, YAF.
+# RAVDESS: nieparzysty numer aktora = Male, parzysty = Female
+#          (dokumentacja RAVDESS, Livingstone & Russo 2018).
+# SAVEE:   wszyscy czterej mówcy (DC, JE, JK, KL) to mężczyźni
+#          (dokumentacja SAVEE, Haq & Jackson 2009).
+# CREMA-D: płeć NIE wynika z numeru aktora - pochodzi z oficjalnego pliku
+#          VideoDemographics.csv (repozytorium CheyneyComputerScience/CREMA-D),
+#          zapisanego poniżej jako zbiór ID aktorek (48 M / 43 F).
 
 TESS_GENDER_MAP: Dict[str, str] = {"OAF": "Female", "YAF": "Female"}
 
 SAVEE_GENDER_MAP: Dict[str, str] = {
     "DC": "Male",
-    "JE": "Female",
-    "JK": "Female",
+    "JE": "Male",
+    "JK": "Male",
     "KL": "Male",
 }
+
+# ID aktorek CREMA-D wg VideoDemographics.csv (kolumna Sex == "Female").
+# Pozostałe ID z zakresu 1001-1091 to mężczyźni.
+CREMAD_FEMALE_ACTOR_IDS: frozenset[int] = frozenset({
+    1002, 1003, 1004, 1006, 1007, 1008, 1009, 1010, 1012, 1013,
+    1018, 1020, 1021, 1024, 1025, 1028, 1029, 1030, 1037, 1043,
+    1046, 1047, 1049, 1052, 1053, 1054, 1055, 1056, 1058, 1060,
+    1061, 1063, 1072, 1073, 1074, 1075, 1076, 1078, 1079, 1082,
+    1084, 1089, 1091,
+})
+CREMAD_ACTOR_ID_RANGE = range(1001, 1092)
 
 
 def parse_tess_gender(file_path: Path) -> Optional[str]:
@@ -259,7 +274,8 @@ def parse_tess_gender(file_path: Path) -> Optional[str]:
 def parse_ravdess_gender(file_path: Path) -> Optional[str]:
     """Wyciąga płeć z nazwy pliku RAVDESS (siódme pole - numer aktora).
 
-    Aktorzy 1-12 = Female, 13-24 = Male (oficjalna dokumentacja RAVDESS).
+    Nieparzysty numer aktora = Male, parzysty = Female (oficjalna
+    dokumentacja RAVDESS).
     """
     parts = file_path.stem.split("-")
     if len(parts) < 7:
@@ -268,7 +284,9 @@ def parse_ravdess_gender(file_path: Path) -> Optional[str]:
         actor_num = int(parts[6])
     except (ValueError, IndexError):
         return None
-    return "Female" if 1 <= actor_num <= 12 else "Male"
+    if not 1 <= actor_num <= 24:
+        return None
+    return "Female" if actor_num % 2 == 0 else "Male"
 
 
 def parse_savee_gender(file_path: Path) -> Optional[str]:
@@ -283,16 +301,17 @@ def parse_savee_gender(file_path: Path) -> Optional[str]:
 def parse_cremad_gender(file_path: Path) -> Optional[str]:
     """Wyciąga płeć z nazwy pliku CREMA-D (pierwszy token - ID aktora).
 
-    Parzyste ActorID = Female, nieparzyste = Male (oficjalna dokumentacja CREMA-D).
+    Płeć odczytywana z `CREMAD_FEMALE_ACTOR_IDS` (dane z oficjalnego
+    pliku VideoDemographics.csv); ID spoza zakresu 1001-1091 -> None.
     """
     parts = file_path.stem.split("_")
-    if len(parts) < 1:
-        return None
     try:
         actor_id = int(parts[0])
     except (ValueError, IndexError):
         return None
-    return "Female" if actor_id % 2 == 0 else "Male"
+    if actor_id not in CREMAD_ACTOR_ID_RANGE:
+        return None
+    return "Female" if actor_id in CREMAD_FEMALE_ACTOR_IDS else "Male"
 
 
 # Rejestr parserów płci - klucz to nazwa datasetu.

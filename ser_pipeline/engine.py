@@ -34,10 +34,12 @@ class TrainingConfig:
         early_stopping_patience: Liczba epok bez poprawy straty
             walidacyjnej, po której trening jest przerywany.
         device: Urządzenie obliczeniowe ("cuda" lub "cpu").
-        multitask_alpha: Waga zadania zgrubnego ("coarse") w połączonej
-            funkcji straty modeli wielozadaniowych (np.
-            `model.HierarchicalMultiTaskCRNN`):
-            `L = alpha * L_coarse + (1 - alpha) * L_fine`.
+        multitask_alpha: Waga zadania pomocniczego w połączonej funkcji
+            straty modeli wielozadaniowych:
+            `L = alpha * L_aux + (1 - alpha) * L_fine`, gdzie `L_aux`
+            to strata grupy emocji (`coarse`) dla
+            `model.HierarchicalMultiTaskCRNN` lub strata płci dla
+            `model.GenderAwareSERModel`.
             Wartość domyślna (0.2) odpowiada optymalnej wadze
             wyznaczonej empirycznie w oryginalnej pracy o architekturze
             3D-HMTL. Parametr jest ignorowany przez modele, które nie

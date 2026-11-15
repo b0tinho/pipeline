@@ -624,16 +624,19 @@ class GenderAwareSERModel(nn.Module):
            `HierarchicalMultiTaskCRNN`) jest aktywowany automatycznie
            przez `engine._run_one_epoch`.
 
-    Uwaga dot. danych: ponieważ datasety SER nie mają wprost
-    zaetykietowanych mówców binarną płcią w wierszach DataFrame,
-    etykieta płci w bieżącej implementacji NIE jest używana jako
-    target (strategia "unsupervised auxiliary task" - wykrywanie
-    `hasattr(model, "forward_multitask")` powoduje, że `engine.py`
-    próbuje użyć `coarse_labels` z trzeciej pozycji batcha zamiast
-    płci). Dla pełnego treningu dwugłowicowego z etykietami płci
-    referencyjnych należy rozszerzyć `dataset.py` o dodatkową kolumnę
-    `gender` w DataFrame i osobny `GenderLabelEncoder` - zostanie to
-    zaimplementowane przy kolejnej iteracji.
+    Etykiety płci: głowica płci jest uczona nadzorowanie. Płeć mówcy
+    wyznacza `data_parsing.GENDER_PARSERS` na podstawie nazwy pliku
+    i dokumentacji korpusów (dla CREMA-D - z `VideoDemographics.csv`);
+    `dataset.py` zapisuje ją w kolumnie `gender` i zwraca jako czwarty
+    element krotki `(features, fine_label, coarse_label, gender_label)`.
+    `engine._run_one_epoch` rozpoznaje ten model po 2 wyjściach ostatniej
+    warstwy `gender_head` i jako cel pomocniczy używa `gender_label`:
+    `L = multitask_alpha * L_gender + (1 - multitask_alpha) * L_emotion`.
+
+    Ograniczenie: TESS (tylko kobiety) i SAVEE (tylko mężczyźni) mają
+    jedną płeć, więc w treningu per-dataset zadanie płci jest trywialne
+    i nie wnosi informacji; efekt fuzji płci można ocenić na RAVDESS,
+    CREMA-D oraz zbiorze łączonym.
     """
 
     def __init__(
