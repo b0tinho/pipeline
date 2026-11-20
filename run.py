@@ -13,6 +13,10 @@ Opcje:
     --deltas                  3 kanały wejściowe (statyka + delta + delta-delta)
     --epochs N                Liczba epok (domyslnie: 50)
     --batch-size N            Rozmiar batcha (domyslnie: 32)
+    --seed N                  Ziarno treningu (domyslnie: 42); podzial danych
+                              jest zawsze ten sam, inny seed -> podfolder seed_<N>/
+    --deterministic           Deterministyczne algorytmy CUDA (wolniej, ale
+                              ten sam seed daje ten sam wynik)
 
 Przyklady:
     python run.py
@@ -21,13 +25,14 @@ Przyklady:
     python run.py --deltas
     python run.py --models dscnn,lstm --datasets SAVEE
     python run.py --models gender_aware --datasets TESS,CREMA-D --epochs 30
+    python run.py --combined --models gender_aware --seed 7 --deterministic
 """
 
 from __future__ import annotations
 
 import argparse
 
-from ser_pipeline.main import main
+from ser_pipeline.main import DEFAULT_TRAINING_SEED, main
 from ser_pipeline.model import MODEL_REGISTRY
 
 
@@ -87,6 +92,21 @@ Dostepne datasety: TESS, RAVDESS, SAVEE, CREMA-D
         default=32,
         help="Rozmiar batcha (domyslnie: 32)",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=DEFAULT_TRAINING_SEED,
+        help=(
+            "Ziarno treningu: wagi, kolejnosc batchy, augmentacja "
+            f"(domyslnie: {DEFAULT_TRAINING_SEED}). Podzial danych sie nie zmienia."
+        ),
+    )
+    parser.add_argument(
+        "--deterministic",
+        action="store_true",
+        default=False,
+        help="Deterministyczne algorytmy CUDA (wolniejszy trening)",
+    )
     return parser
 
 
@@ -96,6 +116,8 @@ if __name__ == "__main__":
 
     if args.epochs < 1 or args.batch_size < 1:
         parser.error("--epochs i --batch-size musza byc dodatnie")
+    if args.seed < 0:
+        parser.error("--seed musi byc nieujemny")
 
     main(
         model_names=args.models,
@@ -105,4 +127,6 @@ if __name__ == "__main__":
         use_deltas=args.deltas,
         num_epochs=args.epochs,
         batch_size=args.batch_size,
+        seed=args.seed,
+        deterministic=args.deterministic,
     )
