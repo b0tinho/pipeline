@@ -26,7 +26,6 @@ Przyklady:
 from __future__ import annotations
 
 import argparse
-from typing import Optional
 
 from ser_pipeline.main import main
 from ser_pipeline.model import MODEL_REGISTRY
@@ -79,13 +78,13 @@ Dostepne datasety: TESS, RAVDESS, SAVEE, CREMA-D
     parser.add_argument(
         "--epochs",
         type=int,
-        default=None,
+        default=50,
         help="Liczba epok treningu (domyslnie: 50)",
     )
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=None,
+        default=32,
         help="Rozmiar batcha (domyslnie: 32)",
     )
     return parser
@@ -95,14 +94,8 @@ if __name__ == "__main__":
     parser = build_parser()
     args = parser.parse_args()
 
-    # Nadpisanie domyslnych parametrow, jesli podano z CLI
-    if args.epochs is not None or args.batch_size is not None:
-        from ser_pipeline.engine import TrainingConfig
-
-        if args.epochs is not None:
-            TrainingConfig.num_epochs = args.epochs
-        if args.batch_size is not None:
-            TrainingConfig.batch_size = args.batch_size  # type: ignore[attr-defined]
+    if args.epochs < 1 or args.batch_size < 1:
+        parser.error("--epochs i --batch-size musza byc dodatnie")
 
     main(
         model_names=args.models,
@@ -110,4 +103,6 @@ if __name__ == "__main__":
         combined=args.combined,
         use_preprocessed=args.preprocessed,
         use_deltas=args.deltas,
+        num_epochs=args.epochs,
+        batch_size=args.batch_size,
     )

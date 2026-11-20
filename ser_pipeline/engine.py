@@ -293,9 +293,15 @@ def evaluate_and_report(
     device: str,
     output_dir: Path,
     dataset_name: str,
+    gender_class_names: Optional[List[str]] = None,
 ) -> dict:
     """Ewaluuje model na zbiorze testowym i zapisuje raport klasyfikacji
     oraz macierz pomyłek do `output_dir`.
+
+    Dla modeli z głowicą płci (`gender_head`, np.
+    `model.GenderAwareSERModel`) dodatkowo zapisywany jest
+    `gender_report.json` z dokładnością rozpoznawania płci na zbiorze
+    testowym.
 
     Args:
         model: Wytrenowany model (najlepszy checkpoint).
@@ -305,6 +311,9 @@ def evaluate_and_report(
         device: Urządzenie obliczeniowe.
         output_dir: Folder wynikowy datasetu, np. `results/TESS`.
         dataset_name: Nazwa datasetu (do tytułów wykresów i logów).
+        gender_class_names: Nazwy klas płci zgodne z
+            `gender_label_encoder.classes_` (używane tylko dla modeli
+            z głowicą płci).
 
     Returns:
         Słownik z raportem klasyfikacji (wynik `classification_report`
@@ -314,15 +323,28 @@ def evaluate_and_report(
     all_predictions: List[int] = []
     all_labels: List[int] = []
 
+    has_gender_head = hasattr(model, "gender_head") and hasattr(
+        model, "forward_multitask"
+    )
+    gender_predictions: List[int] = []
+    gender_labels_all: List[int] = []
+
     with torch.no_grad():
-        for features, labels, _coarse_labels, _gender_labels in test_loader:
+        for features, labels, _coarse_labels, gender_labels in test_loader:
             # Etykieta zgrubna (`_coarse_labels`) jest ignorowana - finalna
             # ewaluacja jest zawsze raportowana względem rzeczywistej
             # taksonomii klas datasetu (`model(features)` zwraca logity
             # zadania precyzyjnego dla wszystkich modeli - patrz kontrakt
             # `forward()` w `model.py`).
             features = features.to(device)
-            outputs = model(features)
+            if has_gender_head:
+                gender_logits, outputs = model.forward_multitask(features)
+                gender_predictions.extend(
+                    gender_logits.argmax(dim=1).cpu().numpy().tolist()
+                )
+                gender_labels_all.extend(gender_labels.numpy().tolist())
+            else:
+                outputs = model(features)
             predictions = outputs.argmax(dim=1).cpu().numpy()
             all_predictions.extend(predictions.tolist())
             all_labels.extend(labels.numpy().tolist())
@@ -349,4 +371,57 @@ def evaluate_and_report(
     plt.close(fig)
 
     print(f"[{dataset_name}] Test accuracy: {report['accuracy']:.4f}")
+
+    if has_gender_head:
+        _save_gender_report(
+            gender_labels_all,
+            gender_predictions,
+            gender_class_names,
+            output_dir,
+            dataset_name,
+        )
     return report
+
+
+def _save_gender_report(
+    labels: List[int],
+    predictions: List[int],
+    class_names: Optional[List[str]],
+    output_dir: Path,
+    dataset_name: str,
+) -> None:
+    """Zapisuje `gender_report.json` z oceną głowicy płci na teście.
+
+    Głowica płci ma zawsze 2 wyjścia, ale w zbiorach jednopłciowych
+    (TESS - same kobiety, SAVEE - sami mężczyźni) `LabelEncoder` zna
+    tylko jedną klasę (indeks 0). Brakująca nazwa jest wtedy oznaczana
+    jako nieobecna w zbiorze, żeby raport obejmował oba wyjścia.
+    """
+    names = list(class_names) if class_names else ["0", "1"]
+    while len(names) < 2:
+        names.append(f"{len(names)} (brak w zbiorze)")
+
+    gender_report = classification_report(
+        labels,
+        predictions,
+        labels=[0, 1],
+        target_names=names[:2],
+        output_dict=True,
+        zero_division=0,
+    )
+    gender_accuracy = sum(int(p == t) for p, t in zip(predictions, labels)) / max(
+        len(labels), 1
+    )
+    payload = {
+        "accuracy": gender_accuracy,
+        "num_samples": len(labels),
+        "classes": names[:2],
+        "confusion_matrix": confusion_matrix(
+            labels, predictions, labels=[0, 1]
+        ).tolist(),
+        "classification_report": gender_report,
+    }
+    with open(output_dir / "gender_report.json", "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+
+    print(f"[{dataset_name}] Test accuracy (gender): {gender_accuracy:.4f}")

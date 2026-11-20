@@ -171,6 +171,7 @@ def run_pipeline_for_dataset(
         device=training_config.device,
         output_dir=output_dir,
         dataset_name=f"{dataset_name} / {model_name}",
+        gender_class_names=list(data_loaders.gender_label_encoder.classes_),
     )
 
     # Zapis mapowania indeks -> etykieta, aby wyniki były w pełni odtwarzalne.
@@ -247,6 +248,7 @@ def run_combined_pipeline(
             device=training_config.device,
             output_dir=output_dir,
             dataset_name=f"COMBINED / {model_name}",
+            gender_class_names=list(data_loaders.gender_label_encoder.classes_),
         )
         with open(output_dir / "label_mapping.json", "w", encoding="utf-8") as f:
             json.dump({i: name for i, name in enumerate(class_names)}, f, indent=2)
@@ -261,6 +263,8 @@ def main(
     combined: bool = False,
     use_preprocessed: bool = False,
     use_deltas: bool = False,
+    num_epochs: int = 50,
+    batch_size: int = 32,
 ) -> None:
     """Glowny punkt wejscia pipeline'u.
 
@@ -284,6 +288,9 @@ def main(
             uruchomienia `preprocess_data.py`.
         use_deltas: Czy dodać cechy delta i delta-delta (3 kanały wejściowe)
             obok statycznego Mel-spektrogramu/MFCC.
+        num_epochs: Maksymalna liczba epok treningu (early stopping moze
+            zakonczyc trening wczesniej).
+        batch_size: Rozmiar batcha DataLoaderow.
     """
     # Wybor korzenia danych: surowe vs preprocessed (VAD + preemfaza).
     data_root = PREPROCESSED_DATA_ROOT if use_preprocessed else RAW_DATA_ROOT
@@ -307,7 +314,7 @@ def main(
     )
     augmentation_config = AugmentationConfig(apply_probability=0.5)
     training_config = TrainingConfig(
-        num_epochs=50, learning_rate=1e-3, early_stopping_patience=7,
+        num_epochs=num_epochs, learning_rate=1e-3, early_stopping_patience=7,
     )
 
     if combined:
@@ -322,6 +329,7 @@ def main(
             audio_config=audio_config,
             augmentation_config=augmentation_config,
             training_config=training_config,
+            batch_size=batch_size,
         )
         return
 
@@ -357,6 +365,7 @@ def main(
                     audio_config=audio_config,
                     augmentation_config=augmentation_config,
                     training_config=training_config,
+                    batch_size=batch_size,
                 )
             except Exception as exc:
                 print(
