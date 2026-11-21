@@ -146,7 +146,10 @@ def _mean(values: list, digits: int = 1) -> str:
 
 
 # Ustawienia, ktore powinny byc wspolne dla wszystkich seedow jednej grupy.
-_CONSISTENCY_KEYS = ("num_epochs", "batch_size", "deterministic", "split_seed")
+_CONSISTENCY_KEYS = (
+    "num_epochs", "batch_size", "deterministic", "split_seed",
+    "early_stopping_patience",
+)
 
 
 def summarize(runs: list[RunResult]) -> list[dict]:

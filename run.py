@@ -17,6 +17,8 @@ Opcje:
                               jest zawsze ten sam, inny seed -> podfolder seed_<N>/
     --deterministic           Deterministyczne algorytmy CUDA (wolniej, ale
                               ten sam seed daje ten sam wynik)
+    --patience N              Cierpliwosc early stopping (domyslnie: 7); inna
+                              wartosc -> katalog wynikow z dopiskiem _patience<N>
 
 Przyklady:
     python run.py
@@ -26,13 +28,14 @@ Przyklady:
     python run.py --models dscnn,lstm --datasets SAVEE
     python run.py --models gender_aware --datasets TESS,CREMA-D --epochs 30
     python run.py --combined --models gender_aware --seed 7 --deterministic
+    python run.py --combined --preprocessed --models hierarchical_crnn --seed 2 --deterministic --patience 15
 """
 
 from __future__ import annotations
 
 import argparse
 
-from ser_pipeline.main import DEFAULT_TRAINING_SEED, main
+from ser_pipeline.main import DEFAULT_PATIENCE, DEFAULT_TRAINING_SEED, main
 from ser_pipeline.model import MODEL_REGISTRY
 
 
@@ -107,6 +110,16 @@ Dostepne datasety: TESS, RAVDESS, SAVEE, CREMA-D
         default=False,
         help="Deterministyczne algorytmy CUDA (wolniejszy trening)",
     )
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=DEFAULT_PATIENCE,
+        help=(
+            "Liczba epok bez poprawy val_loss przed zatrzymaniem treningu "
+            f"(domyslnie: {DEFAULT_PATIENCE}). Inna wartosc -> katalog "
+            "wynikow z dopiskiem _patience<N>."
+        ),
+    )
     return parser
 
 
@@ -118,6 +131,8 @@ if __name__ == "__main__":
         parser.error("--epochs i --batch-size musza byc dodatnie")
     if args.seed < 0:
         parser.error("--seed musi byc nieujemny")
+    if args.patience < 1:
+        parser.error("--patience musi byc dodatnie")
 
     main(
         model_names=args.models,
@@ -129,4 +144,5 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         seed=args.seed,
         deterministic=args.deterministic,
+        early_stopping_patience=args.patience,
     )

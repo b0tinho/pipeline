@@ -68,6 +68,11 @@ SPLIT_SEED = 42
 # losowanie augmentacji. Zmieniane flagą `--seed`.
 DEFAULT_TRAINING_SEED = 42
 
+# Domyślna cierpliwość early stopping (epoki bez poprawy val_loss).
+# Zmieniana flagą `--patience`; inna wartość -> osobny katalog wyników
+# z dopiskiem `_patience<N>` (patrz `results_group_dir`).
+DEFAULT_PATIENCE = 7
+
 
 def set_global_seed(seed: int, deterministic: bool = False) -> None:
     """Ustawia ziarno losowości we wszystkich bibliotekach dla
@@ -141,7 +146,10 @@ def _experiment_output_dir(base_dir: Path, seed: int) -> Path:
 
 
 def results_group_dir(
-    combined: bool, use_preprocessed: bool, use_deltas: bool
+    combined: bool,
+    use_preprocessed: bool,
+    use_deltas: bool,
+    patience: int = DEFAULT_PATIENCE,
 ) -> Path:
     """Katalog grupy wyników zależny od trybu i wariantu danych.
 
@@ -153,10 +161,15 @@ def results_group_dir(
         results/combined_deltas/        results/per_dataset_deltas/
         results/combined_filtry_deltas/ results/per_dataset_filtry_deltas/
 
+    Przebiegi z cierpliwością early stopping inną niż domyślna dostają
+    dopisek `_patience<N>` (np. `results/combined_filtry_patience15/`),
+    aby nie mieszały się z wynikami uzyskanymi przy `DEFAULT_PATIENCE`.
+
     Args:
         combined: Tryb połączonych danych.
         use_preprocessed: Dane po VAD + preemfazie.
         use_deltas: Cechy delta i delta-delta.
+        patience: Cierpliwość early stopping.
 
     Returns:
         Ścieżka katalogu grupy (bez nazwy datasetu i modelu).
@@ -166,6 +179,8 @@ def results_group_dir(
         name += "_filtry"
     if use_deltas:
         name += "_deltas"
+    if patience != DEFAULT_PATIENCE:
+        name += f"_patience{patience}"
     return RESULTS_DIR / name
 
 
@@ -421,6 +436,7 @@ def main(
     batch_size: int = 32,
     seed: int = DEFAULT_TRAINING_SEED,
     deterministic: bool = False,
+    early_stopping_patience: int = DEFAULT_PATIENCE,
 ) -> None:
     """Glowny punkt wejscia pipeline'u.
 
@@ -453,11 +469,19 @@ def main(
             domyslny trafiaja do podfolderu `seed_<N>/`.
         deterministic: Czy wymusic deterministyczne algorytmy CUDA
             (wolniej, ale ten sam seed daje ten sam wynik).
+        early_stopping_patience: Liczba epok bez poprawy val_loss, po
+            ktorej trening jest przerywany. Wartosc inna niz
+            `DEFAULT_PATIENCE` -> katalog wynikow z dopiskiem `_patience<N>`.
+            W trybie deterministycznym przebieg z wieksza cierpliwoscia
+            jest dokladnym przedluzeniem przebiegu z mniejsza (ten sam
+            seed = te same pierwsze epoki).
     """
     # Wybor korzenia danych: surowe vs preprocessed (VAD + preemfaza).
     data_root = PREPROCESSED_DATA_ROOT if use_preprocessed else RAW_DATA_ROOT
     dataset_root_paths = _build_root_paths(data_root)
-    results_root = results_group_dir(combined, use_preprocessed, use_deltas)
+    results_root = results_group_dir(
+        combined, use_preprocessed, use_deltas, early_stopping_patience,
+    )
 
     selected_models = (
         model_names if model_names is not None else list(MODEL_REGISTRY.keys())
@@ -471,7 +495,7 @@ def main(
     set_global_seed(seed, deterministic)
     print(f"Seed treningu: {seed} | seed podzialu: {SPLIT_SEED} | "
           f"tryb deterministyczny: {'tak' if deterministic else 'nie'} | "
-          f"wyniki: {results_root}")
+          f"patience: {early_stopping_patience} | wyniki: {results_root}")
 
     audio_config = AudioProcessingConfig(
         sample_rate=16_000, duration_seconds=3.0,
@@ -480,7 +504,8 @@ def main(
     )
     augmentation_config = AugmentationConfig(apply_probability=0.5)
     training_config = TrainingConfig(
-        num_epochs=num_epochs, learning_rate=1e-3, early_stopping_patience=7,
+        num_epochs=num_epochs, learning_rate=1e-3,
+        early_stopping_patience=early_stopping_patience,
     )
 
     if combined:
