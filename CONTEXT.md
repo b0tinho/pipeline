@@ -22,6 +22,7 @@ ser_pipeline/
 run.py                     # CLI (argparse): --models --datasets --combined --preprocessed --deltas --epochs --batch-size --seed --deterministic --patience
 preprocess_data.py         # CLI do preprocessingu offline
 aggregate_results.py       # średnia ± odch. std. z wielu seedów (tabela + CSV)
+trening_patience15.bat     # pełny przebieg patience 15 / 150 epok na maszynie zdalnej (Windows cmd)
 setup.bat / setup.sh / install.bat / install.sh   # instalacja (venv + zależności + CUDA detekcja)
 report.tex                 # pełny raport LaTeX (aktualny)
 requirements.txt, pyproject.toml, .gitignore
@@ -53,7 +54,7 @@ Wspólny kontrakt: wejście `(B, C, F, T)` (C=1 statyka lub C=3 z delta), wyjśc
 - **CLI `--epochs` / `--batch-size`**: przekazywane do `main(num_epochs=..., batch_size=...)` (domyślnie 50 / 32).
 - **GPU**: `num_workers=12`, `pin_memory=True`, `persistent_workers=True`, `prefetch_factor=4`, `cudnn.benchmark=True` (w `set_global_seed`; wyłączane przez `--deterministic`).
 - **Seed i powtarzalność** (2026-11-20): dwa ziarna w `main.py` — `SPLIT_SEED=42` (podział train/val/test, **stały**, więc test jest ten sam dla każdego seeda i wariantu) oraz ziarno treningu `--seed` (domyślnie `DEFAULT_TRAINING_SEED=42`: wagi, kolejność batchy, augmentacja). `set_global_seed` wywoływane **przed każdym eksperymentem**, a train loader tworzony od nowa z własnym `torch.Generator` (`_seeded_train_loader`) — wynik modelu nie zależy już od tego, jakie modele trenowano wcześniej w tym samym uruchomieniu. `--deterministic`: `cudnn.deterministic=True`, `benchmark=False`, `use_deterministic_algorithms(warn_only=True)`, `CUBLAS_WORKSPACE_CONFIG=:4096:8`. Seed ≠ 42 → wyniki w podfolderze `<MODEL>/seed_<N>/`. Każdy przebieg zapisuje `run_config.json` (results_group, seed, split_seed, deterministic, epoki, batch, lr, patience). Sprawdzone: dwa przebiegi z tym samym seedem i `--deterministic` dają identyczny `training_log.csv`.
-- **Agregacja seedów**: `aggregate_results.py [katalog]` grupuje przebiegi po eksperymencie (folder `seed_<N>` zdejmowany z klucza), liczy średnią ± odch. std. (ddof=1) dla accuracy i macro F1 oraz średnią epokę najlepszą / zatrzymania i accuracy głowicy płci. Domyślnie bierze tylko przebiegi z `run_config.json` (po 2026-11-20); `--include-legacy` dołącza stare (oznaczone `42*`), `--seeds 1,2,3` filtruje, `--csv plik` zapisuje. Ostrzega, gdy seedy w grupie mają różne ustawienia (epoki, batch, deterministic, split_seed, patience).
+- **Agregacja seedów**: `aggregate_results.py [katalog]` grupuje przebiegi po eksperymencie (folder `seed_<N>` zdejmowany z klucza), liczy średnią ± odch. std. (ddof=1) dla accuracy i macro F1 oraz średnią epokę najlepszą / zatrzymania i accuracy głowicy płci. Domyślnie bierze tylko przebiegi z `run_config.json` (po 2026-11-20); `--include-legacy` dołącza stare (oznaczone `42*`), `--seeds 1,2,3` filtruje, `--csv plik` zapisuje. Ostrzega, gdy seedy w grupie mają różne ustawienia (epoki, batch, deterministic, split_seed, patience). Różny limit epok **nie** wywołuje ostrzeżenia, jeśli każdy przebieg z mniejszym limitem zatrzymał się przez early stopping przed nim (`_epoch_caps_equivalent`) — bez harmonogramu lr i w trybie deterministycznym taki przebieg byłby identyczny przy większym limicie.
 - **`--patience N`** (2026-11-21): cierpliwość early stopping przekazywana do `TrainingConfig.early_stopping_patience` (domyślnie `DEFAULT_PATIENCE=7`). Wartość ≠ 7 → osobny katalog `..._patience<N>/`, więc nie miesza się z wynikami głównymi. Przy `--deterministic` i tym samym seedzie przebieg z większą cierpliwością jest dokładnym przedłużeniem przebiegu z mniejszą (identyczne pierwsze epoki) — czyste porównanie „co by było, gdyby trening trwał dalej”.
 
 ## Wyniki (accuracy testowe)
@@ -80,9 +81,20 @@ Macro F1 (surowe / deltas / filtry): hier 0.689 / 0.687 / 0.496; dscnn 0.678 / 0
 
 Poszczególne seedy (1 / 2 / 3), surowe: hier 0.702 / 0.671 / 0.701; dscnn 0.682 / 0.681 / 0.674; headfusion 0.653 / 0.667 / 0.666; gender_aware 0.674 / 0.640 / 0.613; lstm 0.556 / 0.571 / 0.601. Deltas: hier 0.661 / 0.698 / 0.706; dscnn 0.635 / 0.672 / 0.675; headfusion 0.635 / 0.644 / 0.661; gender_aware 0.678 / 0.597 / **0.446**; lstm 0.562 / 0.553 / 0.539. Filtry: hier **0.547** / **0.352** / 0.676; dscnn 0.667 / 0.657 / 0.659; headfusion 0.641 / 0.616 / 0.648; gender_aware **0.443** / **0.387** / 0.664; lstm 0.573 / 0.572 / 0.595.
 
-⚠ **Nieudane przebiegi (przedwczesny early stopping)**: filtry/hier s2 (stop ep. 20, train_acc 0.31), filtry/hier s1 (ep. 33, 0.54), filtry/gender_aware s2 (ep. 11, 0.38), filtry/gender_aware s1 (ep. 26, 0.44), deltas/gender_aware s3 (ep. 16, 0.45); udane przebiegi kończą z train_acc ≈ 0.8. Te modele uczą się powoli na początku, a val_loss mocno skacze — przy patience 7 jedna seria gorszych epok przerywa trening, choć model nadal się uczy (filtry/hier s3 przez ~13 epok wyglądał jak s2, przetrwał i doszedł do 0.676). Głowica płci w nieudanych przebiegach ≈ 0.6 — cały model utknął na starcie. Sprawdzenie przyczyny: dodatkowy eksperyment z `--patience 15` (patrz kolejne kroki, pkt 9).
+⚠ **Nieudane przebiegi (przedwczesny early stopping)**: filtry/hier s2 (stop ep. 20, train_acc 0.31), filtry/hier s1 (ep. 33, 0.54), filtry/gender_aware s2 (ep. 11, 0.38), filtry/gender_aware s1 (ep. 26, 0.44), deltas/gender_aware s3 (ep. 16, 0.45); udane przebiegi kończą z train_acc ≈ 0.8. Te modele uczą się powoli na początku, a val_loss mocno skacze — przy patience 7 jedna seria gorszych epok przerywa trening, choć model nadal się uczy (filtry/hier s3 przez ~13 epok wyglądał jak s2, przetrwał i doszedł do 0.676). Głowica płci w nieudanych przebiegach ≈ 0.6 — cały model utknął na starcie. Przyczyna potwierdzona eksperymentem z `--patience 15` (niżej).
 
 **Wnioski (3 seedy)**: (1) ranking na surowych: hier 0.692 ≥ dscnn 0.679 > headfusion 0.662 > gender_aware 0.642 > lstm 0.576; różnica hier–dscnn (1.3 p.p.) mieści się w rozrzucie hier — nierozstrzygająca; dscnn najstabilniejszy (±0.004). (2) **`gender_aware` spada na 4. miejsce** (−3.7 p.p. względem dscnn) i jest mniej stabilny; dawne 0.671 było szczęśliwym seedem — adaptacja do płci nie poprawia wyniku względem prostszego CNN. (3) **Delty lekko szkodzą wszystkim 5 modelom** (hier −0.4, headfusion −1.5, dscnn −1.8, lstm −2.5, gender_aware −6.8 p.p. — ten ostatni głównie przez jeden nieudany seed); każda różnica osobno w szumie, ale kierunek wszędzie ten sam. (4) **Filtry (VAD+preemfaza)**: dscnn −1.8, headfusion −2.7, lstm +0.4 p.p.; hier i gender_aware w 2 z 3 seedów nie wystartowały, a najlepsze seedy (0.676 i 0.664) są blisko surowych — filtry raczej **destabilizują trening modeli wielozadaniowych**, niż obniżają osiągalny wynik. Dawny wniosek „filtry szkodzą hier o 11 p.p.” był najpewniej skutkiem przedwczesnego zatrzymania.
+
+**Eksperyment `--patience 15`** (2026-11-22, `wyniki_seedy/combined_{filtry,deltas}_patience15/`; hier i gender_aware, seedy 1–3, limit 100). **Przyczyna potwierdzona**: we wszystkich 12 przebiegach pierwsze epoki identyczne jak przy patience 7 (determinizm działa), a jedyna różnica to dłuższy trening. Wszystkie 5 nieudanych przebiegów wróciło do normy: filtry/hier s1 0.547 → 0.679, s2 0.352 → 0.641; filtry/gender s1 0.443 → 0.644, s2 0.387 → 0.572; deltas/gender s3 0.446 → 0.664. Przebiegi udane bez zmian lub +0–4.3 p.p.
+
+| Model | deltas p7 → p15 | filtry p7 → p15 |
+|---|---|---|
+| hierarchical_crnn | 0.688 ± 0.024 → **0.694 ± 0.014** | 0.525 ± 0.163 → **0.666 ± 0.021** |
+| gender_aware | 0.574 ± 0.118 → **0.661 ± 0.019** | 0.498 ± 0.146 → **0.630 ± 0.053** |
+
+Wnioski: (1) filtry kosztują ok. 1–3 p.p. wszystkie modele splotowe (hier −2.6, gender_aware −1.2 względem surowych p7; dscnn −1.8, headfusion −2.7) — dawne −11 / −17 p.p. to skutek przerwanego treningu; (2) modele wielozadaniowe uczą się wolno przez pierwsze 10–20 epok (val_loss mocno skacze), więc patience 7 to za mało; (3) nadal niedoskonałe: filtry/hier s2 — najlepsza epoka = 100 (trafił w limit, train_acc 0.67), filtry/gender s2 — głowica płci 0.64 (nie nauczyła się). Pozostałe modele przy patience 7: dscnn i headfusion kończą przez przeuczenie (train_acc − val_acc = 0.07–0.18), lstm przez słabe uczenie (różnica ≈ 0, train_acc 0.55–0.6).
+
+**Decyzja (2026-11-22): pełna spójność** — główne wyniki pracy będą z jednej procedury: **patience 15, limit 150 epok**, seedy 1–3, `--deterministic`, dla wszystkich 5 modeli i 3 wariantów mega-zbioru. Limit 150 zamiast 100, bo przy patience 15 przebiegi trwają dłużej (lstm i filtry/hier już przy p7/p15 dochodziły do 80–100). Uruchamia to `trening_patience15.bat` (35 przebiegów, szac. ~20–22 h). Pomija 10 przebiegów z eksperymentu wyżej, które zatrzymały się przed limitem 100 (byłyby identyczne przy 150), i powtarza 2, które w limit trafiły (filtry/hier s2, s3). Do czasu tych wyników tabele z patience 7 traktować jako wstępne.
 
 **Mega-zbiór — wyniki historyczne: pojedynczy przebieg** (seed 42, sprzed poprawki seeda; `wyniki/`). Nie używać do wniosków — tylko do porównania:
 
@@ -125,12 +137,34 @@ Poszczególne seedy (1 / 2 / 3), surowe: hier 0.702 / 0.671 / 0.701; dscnn 0.682
 1. **Leave-one-speaker-out split** (zamiast losowego stratyfikowanego) — rzetelna ocena generalizacji; obecnie TESS ~99% to artefakt wycieku mówcy.
 2. **Class weighting** dla RAVDESS (Neutral 288 vs reszta 192).
 3. **Strojenie `multitask_alpha`** dla `hierarchical_crnn` (grid search).
-4. **Eksperyment ablacyjny** VAD vs preemfaza (osobno) — najpierw sprawdzić pkt 9, bo spadek dla hier/gender_aware może wynikać z niestabilnego treningu, a nie z filtrów.
+4. **Eksperyment ablacyjny** VAD vs preemfaza (osobno) — po wynikach z patience 15 spadek przez filtry to tylko ok. 1–3 p.p., więc ablacja ma niski priorytet.
 5. ~~Uśrednianie po wielu seedach~~ — combined zrobione 2026-11-21 (`wyniki_seedy/`, wyniki powyżej). Per dataset jeszcze nie (najmniej istotne). Pierwotny plan (2026-11-20): seedy 1, 2, 3, `--epochs 100 --deterministic`, nowe przebiegi (stary seed 42 nie mieszany z nowymi). Kolejność: (1) combined surowe, 5 modeli; (2) combined deltas; (3) combined filtry (min. hier, dscnn, gender_aware); (4) per dataset (najmniej istotne: TESS wyciek mówcy, SAVEE 72 próbki testowe = 1.4 p.p. na próbkę). Stare wyniki nie są błędne — to pojedyncze pomiary z dużym rozrzutem. Raportować średnią ± odch. std. z `aggregate_results.py`.
 6. **Multi-GPU (DDP)** — obecnie jedna karta.
 7. ~~Dłuższy trening na combined~~ — zrobione 2026-11-20 (`--epochs 100`), patrz wyniki. Dla kolejnych przebiegów na combined używać `--epochs 100` (`gender_aware` zbiega dopiero ok. ep. 69).
 8. **Przypiąć pozostałe pakiety** (soundfile, scikit-learn, pandas, matplotlib) wg `pip freeze` z maszyny zdalnej.
-9. **Eksperyment z `--patience 15`** (2026-11-21) — hier i gender_aware na filtrach i deltach, seedy 1–3 (12 przebiegów) → `combined_filtry_patience15/`, `combined_deltas_patience15/`. Jeśli nieudane seedy dojdą do ok. 0.65–0.70, przyczyną jest przedwczesny early stopping. Ponieważ przebiegi są deterministyczne, pierwsze epoki będą identyczne jak przy patience 7 — można to sprawdzić, porównując `training_log.csv`. Wynik opisywać jako osobny eksperyment (główne tabele zostają z patience 7, ta sama procedura dla wszystkich modeli).
+9. ~~Eksperyment z `--patience 15`~~ — zrobione 2026-11-22, przyczyna potwierdzona (patrz wyniki).
+10. **Pełny przebieg patience 15 / 150 epok** (`trening_patience15.bat`) — w toku od 2026-11-22. Po zakończeniu: skopiować `results/combined*_patience15/` do `wyniki_seedy/`, przy czym filtry/hier seed_2 i seed_3 **zastępują** dotychczasowe; `python aggregate_results.py wyniki_seedy` — grupy `*_patience15` to wyniki główne do pracy.
+11. **Ulepszenie i uzasadnienie `gender_aware` (`gender_aware_v2`)** — plan z 2026-11-22, do zrobienia po kroku 10 (nic jeszcze nie zaimplementowane). Stan: na surowych 0.642 ± 0.031, 4. miejsce, −3.7 p.p. względem dscnn; adaptacja do płci obecnie nie daje zysku.
+    - **Słabości obecnej architektury** (`model.py`, `GenderAwareSERModel`):
+      - (a) Model bierze tylko ostatni krok LSTM (`lstm_out[:, -1, :]`), a nagrania są dopełniane ciszą do 3 s na końcu (`audio_processing.pad_or_truncate`). Przy krótszych plikach (większość CREMA-D i TESS) ostatnie kroki to cisza. Ten sam problem ma `lstm`, czyli najsłabszy model; `hier` zbiera całą wypowiedź uwagą (`AttentionLayer`).
+      - (b) Fuzja płci jest prawie pusta: do 128 cech doklejane są tylko 2 prawdopodobieństwa płci. Przy skuteczności głowicy ok. 96% to praktycznie stałe 0/1, więc daje tylko przesunięcie zależne od płci w pierwszej warstwie głowicy emocji. Model nie może przetwarzać głosu K i M inaczej.
+      - (c) Mały szkielet: 2 warstwy splotowe i jednokierunkowy LSTM.
+      - (d) `multitask_alpha=0.2` nie był strojony.
+    - **Proponowane zmiany**:
+      - (1) uwaga (`AttentionLayer`) zamiast ostatniego kroku — najtańsza zmiana, prawdopodobnie największy zysk;
+      - (2) mocniejsza fuzja: dwie głowice emocji (K i M) mieszane prawdopodobieństwem płci, czyli osobne reguły dla każdej płci, łatwe do opisania w pracy; alternatywa: FiLM (płeć skaluje i przesuwa cechy);
+      - (3) opcjonalnie dwukierunkowy LSTM.
+      - Implementacja jako **osobny model `gender_aware_v2`**; stary zostaje jako wersja wyjściowa, a w pracy opisujemy drogę v1 → v2.
+      - Dodatkowo:
+        - flaga `--alpha`;
+        - accuracy emocji osobno dla nagrań kobiet i mężczyzn w `gender_report.json` (czy różnica między płciami maleje).
+    - **Ablacja do uzasadnienia** (ten sam szkielet, combined surowe, seedy 1–3, patience 15, `--deterministic`, ok. 12 przebiegów, ok. 7–8 h):
+      - A: bez zadania płci (sam szkielet, punkt odniesienia);
+      - B: płeć tylko jako zadanie pomocnicze, bez fuzji;
+      - C: pełny model z fuzją;
+      - D: „wyrocznia”, czyli prawdziwa płeć zamiast przewidywanej (górna granica zysku z informacji o płci).
+      - Wynik C > B > A uzasadnia model, nawet jeśli dscnn jest ogólnie lepszy. D pokazuje, czy problemem jest przewidywanie płci, czy mała użyteczność płci w tych danych.
+    - **Metodyka**: architekturę wybierać po wynikach walidacyjnych, nie testowych, a w pracy wprost napisać, że v2 powstał po analizie v1.
 
 ## Jak uruchomić
 
@@ -153,11 +187,8 @@ done
 python aggregate_results.py                       # tabela średnia ± std z results/
 python aggregate_results.py wyniki --csv wyniki/summary.csv
 
-# eksperyment z większą cierpliwością (osobne katalogi *_patience15)
-for s in 1 2 3; do
-  python run.py --combined --preprocessed --models hierarchical_crnn,gender_aware --epochs 100 --seed $s --deterministic --patience 15
-  python run.py --combined --deltas       --models hierarchical_crnn,gender_aware --epochs 100 --seed $s --deterministic --patience 15
-done
+# wyniki główne: patience 15, limit 150 (Windows cmd)
+trening_patience15.bat
 ```
 
 Zależności: `requirements.txt`; PyTorch dobierany przez `setup.sh`/`setup.bat` (CUDA 11.8 lub CPU).

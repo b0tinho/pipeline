@@ -152,6 +152,25 @@ _CONSISTENCY_KEYS = (
 )
 
 
+def _epoch_caps_equivalent(items: list[RunResult]) -> bool:
+    """Czy rozny limit epok w grupie nie mial wplywu na wyniki.
+
+    Brak harmonogramu lr, wiec przebieg zatrzymany przez early stopping
+    PRZED swoim limitem bylby identyczny przy dowolnym wiekszym limicie
+    (w trybie deterministycznym). Rozny limit ma znaczenie tylko wtedy,
+    gdy przebieg z mniejszym limitem w niego trafil.
+    """
+    caps = [r.config.get("num_epochs") for r in items]
+    if any(c is None for c in caps):
+        return False
+    max_cap = max(caps)
+    return all(
+        r.stop_epoch is not None and r.stop_epoch < cap
+        for r, cap in zip(items, caps)
+        if cap < max_cap
+    )
+
+
 def summarize(runs: list[RunResult]) -> list[dict]:
     """Grupuje przebiegi po (grupa, model) i liczy statystyki."""
     grouped: dict[tuple[str, str], list[RunResult]] = {}
@@ -164,6 +183,7 @@ def summarize(runs: list[RunResult]) -> list[dict]:
         mixed = [
             key for key in _CONSISTENCY_KEYS
             if len({json.dumps(r.config.get(key)) for r in items}) > 1
+            and not (key == "num_epochs" and _epoch_caps_equivalent(items))
         ]
         rows.append({
             "group": group,
