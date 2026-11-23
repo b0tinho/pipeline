@@ -49,7 +49,27 @@ pip install -r requirements.txt
 
 ## Przygotowanie danych
 
-Pobierz i rozpakuj oficjalne wersje zbiorów danych, a następnie umieść
+### Źródła i licencje
+
+Repozytorium **nie zawiera nagrań** - zawiera tylko kod, wyniki i wykresy.
+Każdy zbiór trzeba pobrać samodzielnie z oficjalnego źródła:
+
+| Zbiór   | Źródło | Licencja | Cytowanie |
+|---------|--------|----------|-----------|
+| TESS    | [Borealis, DOI 10.5683/SP2/E8H2MF](https://doi.org/10.5683/SP2/E8H2MF) | CC BY-NC 4.0 | Pichora-Fuller M.K., Dupuis K., *Toronto emotional speech set (TESS)*, Borealis, 2020 |
+| RAVDESS | [Zenodo, DOI 10.5281/zenodo.1188976](https://doi.org/10.5281/zenodo.1188976) (użyto plików mowy, `Audio_Speech_Actors_01-24`) | CC BY-NC-SA 4.0 | Livingstone S.R., Russo F.A., PLoS ONE 13(5): e0196391, 2018, [DOI 10.1371/journal.pone.0196391](https://doi.org/10.1371/journal.pone.0196391) |
+| SAVEE   | [cvssp.org/savee](https://www.cvssp.org/savee/) - wymaga rejestracji | bezpłatnie do celów badawczych | Haq S., Jackson P.J.B., *Speaker-dependent audio-visual emotion recognition*, Proc. AVSP 2009, s. 53-58 |
+| CREMA-D | [GitHub: CheyneyComputerScience/CREMA-D](https://github.com/CheyneyComputerScience/CREMA-D) - autorzy proszą o wypełnienie formularza użytkownika (link w ich README) | ODbL 1.0 (baza), DbCL 1.0 (zawartość) | Cao H. i in., IEEE Trans. Affective Computing 5(4): 377-390, 2014, [DOI 10.1109/TAFFC.2014.2336244](https://doi.org/10.1109/TAFFC.2014.2336244) |
+
+Dane wykorzystano wyłącznie w celach naukowych i niekomercyjnych.
+**Nie umieszczaj nagrań (surowych ani przetworzonych, np. z
+`data_preprocessed/`) w repozytorium** - licencje lub warunki dostępu
+(rejestracja SAVEE) nie pozwalają na ich dalsze udostępnianie w tej formie.
+Katalogi `data/*/` i `data_preprocessed/` są w `.gitignore`.
+
+### Układ katalogów
+
+Rozpakuj zbiory, a następnie umieść
 je (lub podlinkuj) w katalogu `data/`, zgodnie z domyślną konfiguracją
 w `ser_pipeline/main.py` (`DATASET_ROOT_PATHS`). Struktura wewnętrzna
 folderów nie ma znaczenia - pliki `.wav` są wyszukiwane rekurencyjnie -

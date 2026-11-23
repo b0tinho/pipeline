@@ -11,6 +11,7 @@ rem   filtry: gender_aware (seedy 1-3), hierarchical_crnn seed 1
 rem Powtarzane: filtry / hierarchical_crnn seed 2 i 3 (trafily w limit 100).
 
 set PYTHONIOENCODING=utf-8
+set PYTHONUNBUFFERED=1
 set LOG=trening_patience15.log
 set OPTS=--epochs 150 --deterministic --patience 15
 
