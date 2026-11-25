@@ -39,6 +39,12 @@ Dane: `data/{TESS,RAVDESS,SAVEE,CREMA-D}` (TESS: 2800 plików — zduplikowany p
 | `lstm` | KumbharLSTMClassifier | 0.14 M (0.27 M @3 kanały) |
 | `hierarchical_crnn` | HierarchicalMultiTaskCRNN | 13.00 M |
 | `gender_aware` | GenderAwareSERModel | 1.15 M |
+| `gender_aware_detach` | GenderAwareDetach | 1.15 M |
+| `gender_aware_att` | GenderAwareAtt | 1.17 M |
+| `gender_aware_film` | GenderAwareFiLM | 1.17 M |
+| `gender_aware_att_nogender` | GenderAwareAttNoGender | 1.16 M |
+
+Warianty `gender_aware_*` (2026-11-25, narastająco): `_detach` — prawdopodobieństwa płci odcięte od gradientu straty emocji (`.detach()`); `_att` — + `AttentionLayer` zamiast ostatniego kroku LSTM; `_film` — + fuzja FiLM (płeć → γ, β po 128, `cechy·(1+γ)+β`, zerowa inicjalizacja); `_att_nogender` — kontrola dla `_att` bez zadania płci i bez fuzji (brak `gender_head`/`forward_multitask`, więc zwykła strata emocji). Wyjściowy `gender_aware` daje przy tym samym seedzie identyczne wagi i wyjścia jak przed zmianą (sprawdzone). Ablacja: `trening_gender_warianty.bat` (combined surowe, seedy 1–3, patience 15, 150 epok, deterministycznie → `results/combined_patience15/`).
 
 Wspólny kontrakt: wejście `(B, C, F, T)` (C=1 statyka lub C=3 z delta), wyjście logity `(B, num_classes)`. Modele multi-task (`hierarchical_crnn`, `gender_aware`) mają `forward_multitask()`.
 

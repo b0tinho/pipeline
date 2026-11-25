@@ -602,7 +602,58 @@ class HierarchicalMultiTaskCRNN(nn.Module):
 
 # ===========================================================================
 # 5. GenderAwareSERModel - dwugłowicowy CNN+LSTM z fuzją płci (gender fusion)
+#    oraz jego warianty
 # ===========================================================================
+def _build_cnn_lstm(
+    input_channels: int, input_freq_dim: int, lstm_hidden_size: int
+) -> tuple[nn.Module, nn.LSTM]:
+    """Szkielet rodziny `gender_aware`: 2 bloki splotowe + LSTM."""
+    cnn = nn.Sequential(
+        nn.Conv2d(
+            in_channels=input_channels, out_channels=32, kernel_size=3, padding=1
+        ),
+        nn.BatchNorm2d(32),
+        nn.ReLU(inplace=True),
+        nn.MaxPool2d(kernel_size=2),
+        nn.Conv2d(32, 64, kernel_size=3, padding=1),
+        nn.BatchNorm2d(64),
+        nn.ReLU(inplace=True),
+        nn.MaxPool2d(kernel_size=2),
+    )
+
+    pooled_freq = max(input_freq_dim // 4, 1)
+    cnn_out_features = 64 * pooled_freq
+
+    lstm = nn.LSTM(
+        input_size=cnn_out_features,
+        hidden_size=lstm_hidden_size,
+        num_layers=1,
+        batch_first=True,
+    )
+    return cnn, lstm
+
+
+def _build_emotion_head(in_features: int, num_classes: int) -> nn.Module:
+    """Głowica emocji rodziny `gender_aware`."""
+    return nn.Sequential(
+        nn.Linear(in_features, 64),
+        nn.BatchNorm1d(64),
+        nn.ReLU(inplace=True),
+        nn.Dropout(0.4),
+        nn.Linear(64, num_classes),
+    )
+
+
+def _run_cnn_lstm(cnn: nn.Module, lstm: nn.LSTM, x: torch.Tensor) -> torch.Tensor:
+    """(batch, C, F, T) -> wyjścia LSTM dla każdego kroku (batch, T', hidden)."""
+    x = cnn(x)  # (batch, 64, freq', time')
+    x = x.permute(0, 3, 1, 2)  # (batch, time', 64, freq')
+    batch_size, seq_len, channels, height = x.size()
+    x = x.reshape(batch_size, seq_len, channels * height)
+    lstm_out, _ = lstm(x)
+    return lstm_out
+
+
 class GenderAwareSERModel(nn.Module):
     """Dwugłowicowy model SER z fuzją predykcji płci, zbudowany na bazie
     architektury CNN+LSTM.
@@ -637,7 +688,24 @@ class GenderAwareSERModel(nn.Module):
     jedną płeć, więc w treningu per-dataset zadanie płci jest trywialne
     i nie wnosi informacji; efekt fuzji płci można ocenić na RAVDESS,
     CREMA-D oraz zbiorze łączonym.
+
+    Warianty (podklasy niżej, osobne klucze w `MODEL_REGISTRY`) zmieniają
+    tylko trzy ustawienia klasy; dla `gender_aware` mają one wartości
+    wyjściowe, więc model działa dokładnie tak jak wcześniej:
+        - `detach_gender`: czy odciąć gradient straty emocji od głowicy
+          płci (prawdopodobieństwa płci trafiają do głowicy emocji jako
+          stałe, a głowicę płci uczy tylko strata płci);
+        - `pooling`: `"last"` - ostatni krok LSTM, `"attention"` -
+          ważona suma wszystkich kroków (`AttentionLayer`);
+        - `fusion`: `"concat"` - doklejenie 2 prawdopodobieństw płci do
+          cech, `"film"` - płeć skaluje i przesuwa każdą ze 128 cech
+          (`cechy * (1 + gamma) + beta`, gamma i beta liczone z
+          prawdopodobieństw płci).
     """
+
+    detach_gender: bool = False
+    pooling: str = "last"  # "last" | "attention"
+    fusion: str = "concat"  # "concat" | "film"
 
     def __init__(
         self,
@@ -660,28 +728,16 @@ class GenderAwareSERModel(nn.Module):
                 wartość 32 odpowiada oryginalnemu 128 pasm Mel / 4.
         """
         super().__init__()
+        if self.pooling not in ("last", "attention"):
+            raise ValueError(f"Nieznany pooling: {self.pooling}")
+        if self.fusion not in ("concat", "film"):
+            raise ValueError(f"Nieznana fuzja: {self.fusion}")
 
-        self.cnn = nn.Sequential(
-            nn.Conv2d(
-                in_channels=input_channels, out_channels=32, kernel_size=3, padding=1
-            ),
-            nn.BatchNorm2d(32),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2),
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2),
-        )
-
-        pooled_freq = max(input_freq_dim // 4, 1)
-        cnn_out_features = 64 * pooled_freq
-
-        self.lstm = nn.LSTM(
-            input_size=cnn_out_features,
-            hidden_size=lstm_hidden_size,
-            num_layers=1,
-            batch_first=True,
+        # Kolejność tworzenia warstw (cnn, lstm, gender_head, emotion_head)
+        # jest taka sama jak przed dodaniem wariantów, więc przy tym samym
+        # seedzie `gender_aware` dostaje identyczne wagi początkowe.
+        self.cnn, self.lstm = _build_cnn_lstm(
+            input_channels, input_freq_dim, lstm_hidden_size
         )
 
         self.gender_head = nn.Sequential(
@@ -692,13 +748,28 @@ class GenderAwareSERModel(nn.Module):
             nn.Linear(64, 2),  # 2 logity: Female / Male
         )
 
-        self.emotion_head = nn.Sequential(
-            nn.Linear(lstm_hidden_size + 2, 64),
-            nn.BatchNorm1d(64),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.4),
-            nn.Linear(64, num_classes),
-        )
+        emotion_in = lstm_hidden_size + 2 if self.fusion == "concat" else lstm_hidden_size
+        self.emotion_head = _build_emotion_head(emotion_in, num_classes)
+
+        # Warstwy dodatkowe tylko dla wariantów - tworzone po pozostałych,
+        # żeby nie zmieniać losowania wag modelu wyjściowego.
+        if self.pooling == "attention":
+            self.attention = AttentionLayer(hidden_size=lstm_hidden_size)
+        if self.fusion == "film":
+            # Prawdopodobieństwa płci (2) -> gamma i beta (po 128).
+            # Zerowa inicjalizacja: na starcie gamma = beta = 0, czyli
+            # cechy przechodzą bez zmian, a wpływ płci model uczy się
+            # stopniowo.
+            self.film = nn.Linear(2, 2 * lstm_hidden_size)
+            nn.init.zeros_(self.film.weight)
+            nn.init.zeros_(self.film.bias)
+
+    def _encode(self, x: torch.Tensor) -> torch.Tensor:
+        """CNN + LSTM + zebranie sekwencji w jeden wektor (batch, hidden)."""
+        lstm_out = _run_cnn_lstm(self.cnn, self.lstm, x)
+        if self.pooling == "attention":
+            return self.attention(lstm_out)
+        return lstm_out[:, -1, :]  # ostatni krok czasowy
 
     def forward_multitask(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Pełny przebieg dwugłowicowy.
@@ -710,18 +781,18 @@ class GenderAwareSERModel(nn.Module):
             Krotka `(gender_logits, emotion_logits)` o kształtach
             `(batch, 2)` i `(batch, num_classes)`.
         """
-        x = self.cnn(x)  # (batch, 64, freq', time')
-        x = x.permute(0, 3, 1, 2)  # (batch, time', 64, freq')
-
-        batch_size, seq_len, channels, height = x.size()
-        x = x.reshape(batch_size, seq_len, channels * height)
-
-        lstm_out, _ = self.lstm(x)
-        features = lstm_out[:, -1, :]  # ostatni krok czasowy
+        features = self._encode(x)
 
         gender_logits = self.gender_head(features)
         gender_probs = torch.softmax(gender_logits, dim=1)
-        fused_features = torch.cat((features, gender_probs), dim=1)
+        if self.detach_gender:
+            gender_probs = gender_probs.detach()
+
+        if self.fusion == "film":
+            gamma, beta = self.film(gender_probs).chunk(2, dim=1)
+            fused_features = features * (1.0 + gamma) + beta
+        else:
+            fused_features = torch.cat((features, gender_probs), dim=1)
         emotion_logits = self.emotion_head(fused_features)
 
         return gender_logits, emotion_logits
@@ -739,6 +810,59 @@ class GenderAwareSERModel(nn.Module):
         return emotion_logits
 
 
+class GenderAwareDetach(GenderAwareSERModel):
+    """`gender_aware` z odciętym gradientem: strata emocji nie zmienia
+    głowicy płci (prawdopodobieństwa płci są dla głowicy emocji stałą)."""
+
+    detach_gender = True
+
+
+class GenderAwareAtt(GenderAwareSERModel):
+    """`gender_aware_detach` + uwaga zamiast ostatniego kroku LSTM
+    (ostatnie kroki to często cisza dopełnienia)."""
+
+    detach_gender = True
+    pooling = "attention"
+
+
+class GenderAwareFiLM(GenderAwareSERModel):
+    """`gender_aware_att` + fuzja FiLM: płeć skaluje i przesuwa każdą
+    cechę zamiast dopisywać 2 liczby do wektora cech."""
+
+    detach_gender = True
+    pooling = "attention"
+    fusion = "film"
+
+
+class GenderAwareAttNoGender(nn.Module):
+    """Kontrola dla `gender_aware_att`: ten sam szkielet (CNN + LSTM +
+    uwaga) i ta sama głowica emocji, ale bez zadania płci i bez fuzji.
+
+    Model celowo nie ma `gender_head` ani `forward_multitask`, więc
+    `engine._run_one_epoch` uczy go zwykłą stratą emocji (bez straty
+    płci). Porównanie z `gender_aware_att` pokazuje, ile daje sama
+    informacja o płci.
+    """
+
+    def __init__(
+        self,
+        num_classes: int,
+        input_freq_dim: int,
+        input_channels: int = 1,
+        lstm_hidden_size: int = 128,
+    ) -> None:
+        super().__init__()
+        self.cnn, self.lstm = _build_cnn_lstm(
+            input_channels, input_freq_dim, lstm_hidden_size
+        )
+        self.emotion_head = _build_emotion_head(lstm_hidden_size, num_classes)
+        self.attention = AttentionLayer(hidden_size=lstm_hidden_size)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        lstm_out = _run_cnn_lstm(self.cnn, self.lstm, x)
+        return self.emotion_head(self.attention(lstm_out))
+
+
 # ===========================================================================
 # Rejestr modeli i fabryka
 # ===========================================================================
@@ -748,6 +872,10 @@ MODEL_REGISTRY: dict[str, type[nn.Module]] = {
     "lstm": KumbharLSTMClassifier,
     "hierarchical_crnn": HierarchicalMultiTaskCRNN,
     "gender_aware": GenderAwareSERModel,
+    "gender_aware_detach": GenderAwareDetach,
+    "gender_aware_att": GenderAwareAtt,
+    "gender_aware_film": GenderAwareFiLM,
+    "gender_aware_att_nogender": GenderAwareAttNoGender,
 }
 
 
