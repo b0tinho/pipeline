@@ -26,6 +26,9 @@ Kolumny:
     best_ep srednia epoka najlepszej val_loss (zapisany checkpoint)
     stop_ep srednia epoka zakonczenia treningu (early stopping lub limit)
     gender  accuracy glowicy plci (tylko modele z gender_head)
+    emo_F   accuracy emocji na nagraniach kobiet  (z `gender_report.json`,
+    emo_M   accuracy emocji na nagraniach mezczyzn  sekcja `emotion_by_gender`;
+    gap_FM  emo_F - emo_M                           przebiegi od 2026-11-26)
 """
 
 from __future__ import annotations
@@ -56,6 +59,8 @@ class RunResult:
     best_epoch: int | None
     stop_epoch: int | None
     gender_accuracy: float | None
+    emotion_female: float | None = None
+    emotion_male: float | None = None
     config: dict = field(default_factory=dict)
 
 
@@ -93,10 +98,13 @@ def _load_run(run_dir: Path, root: Path) -> RunResult:
         report = json.load(f)
 
     gender_accuracy = None
+    by_gender: dict = {}
     gender_path = run_dir / "gender_report.json"
     if gender_path.exists():
         with open(gender_path, encoding="utf-8") as f:
-            gender_accuracy = json.load(f).get("accuracy")
+            gender_payload = json.load(f)
+        gender_accuracy = gender_payload.get("accuracy")
+        by_gender = gender_payload.get("emotion_by_gender", {})
 
     best_epoch, stop_epoch = _read_epochs(run_dir / "training_log.csv")
 
@@ -110,6 +118,8 @@ def _load_run(run_dir: Path, root: Path) -> RunResult:
         best_epoch=best_epoch,
         stop_epoch=stop_epoch,
         gender_accuracy=gender_accuracy,
+        emotion_female=by_gender.get("Female", {}).get("accuracy"),
+        emotion_male=by_gender.get("Male", {}).get("accuracy"),
         config=config,
     )
 
@@ -197,6 +207,13 @@ def summarize(runs: list[RunResult]) -> list[dict]:
             "best_ep": _mean([r.best_epoch for r in items]),
             "stop_ep": _mean([r.stop_epoch for r in items]),
             "gender": _mean_std([r.gender_accuracy for r in items]),
+            "emo_F": _mean_std([r.emotion_female for r in items]),
+            "emo_M": _mean_std([r.emotion_male for r in items]),
+            "gap_FM": _mean_std([
+                r.emotion_female - r.emotion_male
+                for r in items
+                if r.emotion_female is not None and r.emotion_male is not None
+            ]),
             "acc_mean": statistics.mean(r.accuracy for r in items),
             "warning": (
                 f"rozne ustawienia: {', '.join(mixed)}" if mixed else ""
@@ -205,7 +222,10 @@ def summarize(runs: list[RunResult]) -> list[dict]:
     return rows
 
 
-_COLUMNS = ("model", "n", "seeds", "acc", "F1", "best_ep", "stop_ep", "gender")
+_COLUMNS = (
+    "model", "n", "seeds", "acc", "F1", "best_ep", "stop_ep", "gender",
+    "emo_F", "emo_M", "gap_FM",
+)
 
 
 def print_table(rows: list[dict]) -> None:

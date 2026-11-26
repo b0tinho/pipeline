@@ -298,10 +298,12 @@ def evaluate_and_report(
     """Ewaluuje model na zbiorze testowym i zapisuje raport klasyfikacji
     oraz macierz pomyłek do `output_dir`.
 
-    Dla modeli z głowicą płci (`gender_head`, np.
-    `model.GenderAwareSERModel`) dodatkowo zapisywany jest
-    `gender_report.json` z dokładnością rozpoznawania płci na zbiorze
-    testowym.
+    Dla każdego modelu zapisywany jest też `gender_report.json`. Zawiera
+    on zawsze sekcję `emotion_by_gender`, czyli skuteczność rozpoznawania
+    emocji osobno dla nagrań kobiet i mężczyzn (pozwala to porównać
+    modele z płcią i bez niej). Dla modeli z głowicą płci (`gender_head`,
+    np. `model.GenderAwareSERModel`) raport zawiera dodatkowo ocenę samej
+    głowicy płci (accuracy, macierz pomyłek).
 
     Args:
         model: Wytrenowany model (najlepszy checkpoint).
@@ -342,9 +344,9 @@ def evaluate_and_report(
                 gender_predictions.extend(
                     gender_logits.argmax(dim=1).cpu().numpy().tolist()
                 )
-                gender_labels_all.extend(gender_labels.numpy().tolist())
             else:
                 outputs = model(features)
+            gender_labels_all.extend(gender_labels.numpy().tolist())
             predictions = outputs.argmax(dim=1).cpu().numpy()
             all_predictions.extend(predictions.tolist())
             all_labels.extend(labels.numpy().tolist())
@@ -372,25 +374,71 @@ def evaluate_and_report(
 
     print(f"[{dataset_name}] Test accuracy: {report['accuracy']:.4f}")
 
-    if has_gender_head:
-        _save_gender_report(
-            gender_labels_all,
-            gender_predictions,
-            gender_class_names,
-            output_dir,
-            dataset_name,
-        )
+    _save_gender_report(
+        gender_labels_all,
+        gender_predictions if has_gender_head else None,
+        gender_class_names,
+        output_dir,
+        dataset_name,
+        emotion_labels=all_labels,
+        emotion_predictions=all_predictions,
+    )
     return report
+
+
+def _emotion_by_gender(
+    emotion_labels: List[int],
+    emotion_predictions: List[int],
+    gender_labels: List[int],
+    gender_names: List[str],
+) -> dict:
+    """Skuteczność rozpoznawania emocji osobno dla każdej płci.
+
+    Zwraca słownik `{nazwa_płci: {num_samples, accuracy, f1_macro}}`
+    (tylko płcie obecne w zbiorze testowym) oraz `accuracy_gap`, czyli
+    różnicę accuracy `gender_names[0] - gender_names[1]` (np. Female -
+    Male), gdy obie płcie są obecne.
+    """
+    result: dict = {}
+    for index, name in enumerate(gender_names[:2]):
+        idx = [i for i, g in enumerate(gender_labels) if g == index]
+        if not idx:
+            continue
+        true = [emotion_labels[i] for i in idx]
+        pred = [emotion_predictions[i] for i in idx]
+        sub_report = classification_report(
+            true, pred, output_dict=True, zero_division=0
+        )
+        result[name] = {
+            "num_samples": len(idx),
+            "accuracy": sum(int(p == t) for p, t in zip(pred, true)) / len(idx),
+            "f1_macro": sub_report["macro avg"]["f1-score"],
+        }
+    present = [n for n in gender_names[:2] if n in result]
+    if len(present) == 2:
+        result["accuracy_gap"] = {
+            "definition": f"{present[0]} - {present[1]}",
+            "value": result[present[0]]["accuracy"] - result[present[1]]["accuracy"],
+        }
+    return result
 
 
 def _save_gender_report(
     labels: List[int],
-    predictions: List[int],
+    predictions: Optional[List[int]],
     class_names: Optional[List[str]],
     output_dir: Path,
     dataset_name: str,
+    emotion_labels: Optional[List[int]] = None,
+    emotion_predictions: Optional[List[int]] = None,
 ) -> None:
-    """Zapisuje `gender_report.json` z oceną głowicy płci na teście.
+    """Zapisuje `gender_report.json`.
+
+    Sekcja `emotion_by_gender` (skuteczność emocji osobno dla kobiet i
+    mężczyzn) jest zapisywana dla każdego modelu, jeśli podano etykiety
+    i predykcje emocji. Ocena głowicy płci (`accuracy`, macierz pomyłek,
+    raport per klasa) jest dopisywana tylko, gdy `predictions` nie jest
+    None, czyli dla modeli z `gender_head`.
 
     Głowica płci ma zawsze 2 wyjścia, ale w zbiorach jednopłciowych
     (TESS - same kobiety, SAVEE - sami mężczyźni) `LabelEncoder` zna
@@ -400,6 +448,23 @@ def _save_gender_report(
     names = list(class_names) if class_names else ["0", "1"]
     while len(names) < 2:
         names.append(f"{len(names)} (brak w zbiorze)")
+
+    payload: dict = {"num_samples": len(labels), "classes": names[:2]}
+
+    if emotion_labels is not None and emotion_predictions is not None:
+        by_gender = _emotion_by_gender(
+            emotion_labels, emotion_predictions, labels, names
+        )
+        payload["emotion_by_gender"] = by_gender
+        summary = ", ".join(
+            f"{n} {by_gender[n]['accuracy']:.4f}" for n in names[:2] if n in by_gender
+        )
+        print(f"[{dataset_name}] Test accuracy emocji wg płci: {summary}")
+
+    if predictions is None:
+        with open(output_dir / "gender_report.json", "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+        return
 
     gender_report = classification_report(
         labels,
@@ -414,8 +479,7 @@ def _save_gender_report(
     )
     payload = {
         "accuracy": gender_accuracy,
-        "num_samples": len(labels),
-        "classes": names[:2],
+        **payload,
         "confusion_matrix": confusion_matrix(
             labels, predictions, labels=[0, 1]
         ).tolist(),
